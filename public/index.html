@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Conveyor QC Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen p-6">
+  <div class="max-w-4xl mx-auto space-y-6">
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-700 pb-4">
+      <div>
+        <h1 class="text-2xl font-bold text-white">Smart Conveyor QC</h1>
+        <p class="text-sm text-slate-400">Prefix Topik: <code class="text-sky-400">conveyortesst</code></p>
+      </div>
+      <div class="flex items-center gap-2">
+        <span id="connDot" class="h-3 w-3 rounded-full bg-amber-500"></span>
+        <span id="connText" class="text-sm text-slate-300">Menghubungkan SSE...</span>
+      </div>
+    </div>
+
+    <!-- Panel Kontrol Conveyor -->
+    <div class="bg-slate-800 rounded-xl p-6 border border-slate-700 shadow-lg">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        <div>
+          <h2 class="text-lg font-semibold">Kontrol Penggerak Conveyor</h2>
+          <p class="text-xs text-slate-400">Status ESP32 saat ini: <span id="statusBadge" class="font-bold uppercase text-amber-400">-</span></p>
+        </div>
+        <div class="flex gap-3">
+          <button onclick="sendControl('on')" class="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-semibold transition">
+            START (ON)
+          </button>
+          <button onclick="sendControl('off')" class="px-5 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 font-semibold transition">
+            STOP (OFF)
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <div class="flex justify-between text-sm mb-2">
+          <label for="speedSlider" class="text-slate-300">Kecepatan Servo (0 - 90)</label>
+          <span id="speedValue" class="font-mono font-bold text-sky-400">30</span>
+        </div>
+        <input id="speedSlider" type="range" min="0" max="90" value="30"
+               oninput="document.getElementById('speedValue').textContent = this.value"
+               onchange="sendControl(currentState)"
+               class="w-full accent-sky-500 cursor-pointer">
+      </div>
+    </div>
+
+    <!-- Statistik Barang -->
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
+        <p class="text-sm text-slate-400">Total Masuk</p>
+        <p id="valMasuk" class="text-3xl font-bold mt-1">0</p>
+      </div>
+      <div class="bg-slate-800 p-5 rounded-xl border border-emerald-800/60">
+        <p class="text-sm text-emerald-400">Lolos QC (Normal)</p>
+        <p id="valNormal" class="text-3xl font-bold text-emerald-400 mt-1">0</p>
+      </div>
+      <div class="bg-slate-800 p-5 rounded-xl border border-rose-800/60">
+        <p class="text-sm text-rose-400">Gagal QC (Reject)</p>
+        <p id="valReject" class="text-3xl font-bold text-rose-400 mt-1">0</p>
+      </div>
+    </div>
+
+    <!-- Detail Pembacaan Sensor Terakhir -->
+    <div class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+      <h2 class="text-lg font-semibold mb-4">Telemetri Barang Terakhir</h2>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
+        <div class="bg-slate-900/70 p-4 rounded-lg">
+          <p class="text-xs text-slate-400 mb-1">Tinggi Barang (HC-SR04)</p>
+          <p class="text-xl font-mono font-semibold"><span id="valTinggi">0.0</span> cm</p>
+          <p class="text-[11px] text-slate-500 mt-1">Standar: 8.0 - 12.0 cm</p>
+        </div>
+        <div class="bg-slate-900/70 p-4 rounded-lg">
+          <p class="text-xs text-slate-400 mb-1">Kecerahan Kemasan (LDR)</p>
+          <p id="valLdr" class="text-xl font-mono font-semibold">0</p>
+          <p class="text-[11px] text-slate-500 mt-1">Standar: 1500 - 3000</p>
+        </div>
+        <div class="bg-slate-900/70 p-4 rounded-lg flex flex-col justify-center">
+          <p class="text-xs text-slate-400 mb-1">Keputusan QC</p>
+          <p id="valHasil" class="text-xl font-bold uppercase text-slate-300">-</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentState = "on";
+
+    function updateDataUI(d) {
+      document.getElementById("valMasuk").textContent = d.masuk ?? 0;
+      document.getElementById("valNormal").textContent = d.normal ?? 0;
+      document.getElementById("valReject").textContent = d.reject ?? 0;
+      document.getElementById("valTinggi").textContent = (d.tinggi ?? 0).toFixed(1);
+      document.getElementById("valLdr").textContent = d.ldr ?? 0;
+
+      const hasilEl = document.getElementById("valHasil");
+      const hasil = (d.hasil || "-").toLowerCase();
+      hasilEl.textContent = hasil;
+      hasilEl.className = "text-xl font-bold uppercase " + (
+        hasil === "normal" ? "text-emerald-400" :
+        hasil === "reject" ? "text-rose-400" : "text-slate-300"
+      );
+    }
+
+    function updateStatusUI(s) {
+      currentState = s.state || "off";
+      const badge = document.getElementById("statusBadge");
+      badge.textContent = currentState;
+      badge.className = "font-bold uppercase " + (currentState === "on" ? "text-emerald-400" : "text-rose-400");
+
+      document.getElementById("speedSlider").value = s.speed ?? 30;
+      document.getElementById("speedValue").textContent = s.speed ?? 30;
+    }
+
+    async function sendControl(state) {
+      const speed = parseInt(document.getElementById("speedSlider").value, 10);
+      try {
+        await fetch("/api/control", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ state, speed })
+        });
+      } catch (err) {
+        console.error("Gagal mengirim perintah:", err);
+      }
+    }
+
+    // Ambil data awal
+    fetch("/api/state")
+      .then(r => r.json())
+      .then(res => {
+        if (res.data) updateDataUI(res.data);
+        if (res.status) updateStatusUI(res.status);
+      });
+
+    // Dengarkan stream SSE dari Fiber v3
+    const evtSource = new EventSource("/events");
+    evtSource.onopen = () => {
+      document.getElementById("connDot").className = "h-3 w-3 rounded-full bg-emerald-500";
+      document.getElementById("connText").textContent = "Live (SSE Terhubung)";
+    };
+    evtSource.onerror = () => {
+      document.getElementById("connDot").className = "h-3 w-3 rounded-full bg-rose-500";
+      document.getElementById("connText").textContent = "Terputus, mencoba ulang...";
+    };
+    evtSource.addEventListener("data", (e) => updateDataUI(JSON.parse(e.data)));
+    evtSource.addEventListener("status", (e) => updateStatusUI(JSON.parse(e.data)));
+  </script>
+</body>
+</html>
