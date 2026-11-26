@@ -1,40 +1,49 @@
 /*
-  Smart Conveyor - prototipe Wokwi (ESP32)
-  - IR barrier  : dihitung sebagai barang masuk (disimulasikan tombol)
+  Smart Conveyor - ESP32 + 1 stepper 28BYJ-48 (driver ULN2003)
+  - IR barrier  : hitung barang masuk
   - HC-SR04     : ukur tinggi barang (QC)
   - LDR + LED   : baca kecerahan/warna kemasan (QC)
-  - 2x servo    : penggerak conveyor (continuous: 90 = berhenti)
+  - Stepper     : penggerak conveyor (kecepatan diatur lewat langkah/detik)
   - Buzzer      : alarm saat barang reject
   - MQTT        : publish data, subscribe kontrol dari dashboard
+
+  Library: PubSubClient, ArduinoJson (v6.x), AccelStepper
 */
 
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
-#include <ESP32Servo.h>
+#include <AccelStepper.h>
 
 // ====== WiFi & MQTT ======
-const char* WIFI_SSID   = "MosoZydraGyrottaZao";
-const char* WIFI_PASS   = "stone park";
+const char* WIFI_SSID   = "MASUKKAN_SSID_WIFI";
+const char* WIFI_PASS   = "MASUKKAN_PASSWORD_WIFI";
 const char* MQTT_SERVER = "broker.hivemq.com";
 const int   MQTT_PORT   = 1883;
 
-// Broker publik dipakai banyak orang: ganti PREFIX dengan nama unik
-// (dashboard harus memakai prefix yang sama).
+// Broker publik
 const String PREFIX       = "conveyortesst";
 const String TOPIC_DATA   = PREFIX + "/data";
 const String TOPIC_CTRL   = PREFIX + "/control"; //{"cmd": "conveyor","state": "off","speed": 45}
 const String TOPIC_STATUS = PREFIX + "/status";
 
 // ====== Pin ======
-const int PIN_IR     = 27;  // tombol ke GND (simulasi sensor IR barrier)
+const int PIN_IR     = 27;  // sensor IR barrier (aktif LOW saat ada barang)
 const int PIN_TRIG   = 5;
-const int PIN_ECHO   = 18;
+const int PIN_ECHO   = 18;  // pakai pembagi tegangan 1k/2k dari Echo
 const int PIN_LDR    = 34;  // ADC1 (aman dipakai saat WiFi aktif)
 const int PIN_LED    = 4;
-const int PIN_SERVO1 = 16;
-const int PIN_SERVO2 = 17;
 const int PIN_BUZZER = 25;
+
+// Driver ULN2003 (stepper 28BYJ-48)
+const int PIN_IN1 = 16;
+const int PIN_IN2 = 17;
+const int PIN_IN3 = 19;
+const int PIN_IN4 = 21;
+
+// ====== Parameter stepper ======
+const float MAX_STEP_PER_SEC = 800;   // speed 90 -> 800 langkah/detik (~12 RPM)
+                                      // turunkan bila motor bergetar/melompat
 
 // ====== Parameter QC (sesuaikan saat kalibrasi) ======
 const float SENSOR_HEIGHT_CM = 30.0;  // jarak sensor ke permukaan belt
@@ -46,10 +55,12 @@ const int   LDR_MAX          = 3000;
 // ====== Objek & state ======
 WiFiClient espClient;
 PubSubClient client(espClient);
-Servo servo1, servo2;
+
+// Urutan pin untuk 28BYJ-48 via ULN2003: IN1, IN3, IN2, IN4
+AccelStepper m1(AccelStepper::HALF4WIRE, PIN_IN1, PIN_IN3, PIN_IN2, PIN_IN4);
 
 bool conveyorOn = true;
-int  conveyorSpeed = 30;  // 0-90, selisih dari titik berhenti 90 derajat
+int  conveyorSpeed = 30;  // 0-90 (dipetakan ke 0-MAX_STEP_PER_SEC langkah/detik)
 
 unsigned long totalMasuk = 0, totalNormal = 0, totalReject = 0;
 float lastTinggi = 0;
@@ -60,20 +71,23 @@ int lastIrState = HIGH;
 unsigned long lastIrMs = 0;
 unsigned long lastReconnectMs = 0;
 
-// ---------- Servo conveyor ----------
+// ---------- Delay yang tetap memutar stepper ----------
+// Pengganti delay(): selama menunggu, motor tetap dijalankan
+// sehingga conveyor tidak berhenti saat barang diproses.
+void stepDelay(unsigned long ms) {
+  unsigned long t0 = millis();
+  while (millis() - t0 < ms) {
+    m1.runSpeed();
+  }
+}
+
+// ---------- Stepper conveyor ----------
 void applyConveyor() {
   if (conveyorOn && conveyorSpeed > 0) {
-    if (!servo1.attached()) servo1.attach(PIN_SERVO1, 500, 2400);
-    if (!servo2.attached()) servo2.attach(PIN_SERVO2, 500, 2400);
-    servo1.write(90 + conveyorSpeed);
-    servo2.write(90 - conveyorSpeed);  // dibalik agar belt searah
+    m1.setSpeed(map(conveyorSpeed, 0, 90, 0, (long)MAX_STEP_PER_SEC));  // langkah/detik
   } else {
-    // servo continuous: 90 = berhenti, kirim dulu sebelum sinyal dilepas
-    if (servo1.attached()) servo1.write(90);
-    if (servo2.attached()) servo2.write(90);
-    delay(50);
-    servo1.detach();
-    servo2.detach();
+    m1.setSpeed(0);
+    m1.disableOutputs();  // matikan kumparan agar tidak panas
   }
 }
 
@@ -118,7 +132,7 @@ void connectWifi() {
   Serial.print("Menghubungkan WiFi");
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   while (WiFi.status() != WL_CONNECTED) {
-    delay(300);
+    stepDelay(300);   // conveyor tetap jalan selagi menunggu WiFi
     Serial.print(".");
   }
   Serial.println(" terhubung");
@@ -155,21 +169,21 @@ float readDistanceCm() {
 
 float avgDistanceCm(int n = 5) {
   float sum = 0;
-  for (int i = 0; i < n; i++) { sum += readDistanceCm(); delay(10); }
+  for (int i = 0; i < n; i++) { sum += readDistanceCm(); stepDelay(10); }
   return sum / n;
 }
 
 int avgLdr(int n = 8) {
   long sum = 0;
-  for (int i = 0; i < n; i++) { sum += analogRead(PIN_LDR); delay(5); }
+  for (int i = 0; i < n; i++) { sum += analogRead(PIN_LDR); stepDelay(5); }
   return sum / n;
 }
 
 void beepReject() {
-  // buzzer pasif: bangkitkan nada ~1 kHz selama ~0,3 detik
+  // buzzer pasif: nada ~1 kHz selama ~0,3 detik, stepper tetap dijalankan
   for (int i = 0; i < 300; i++) {
-    digitalWrite(PIN_BUZZER, HIGH); delayMicroseconds(500);
-    digitalWrite(PIN_BUZZER, LOW);  delayMicroseconds(500);
+    digitalWrite(PIN_BUZZER, HIGH); delayMicroseconds(500); m1.runSpeed();
+    digitalWrite(PIN_BUZZER, LOW);  delayMicroseconds(500); m1.runSpeed();
   }
 }
 
@@ -184,7 +198,7 @@ void processItem() {
 
   // QC warna/kecerahan (LED menyinari barang, LDR membaca pantulan)
   digitalWrite(PIN_LED, HIGH);
-  delay(50);
+  stepDelay(50);
   lastLdr = avgLdr();
   digitalWrite(PIN_LED, LOW);
   bool warnaOK = (lastLdr >= LDR_MIN && lastLdr <= LDR_MAX);
@@ -217,11 +231,10 @@ void setup() {
   pinMode(PIN_BUZZER, OUTPUT);
   analogReadResolution(12);
 
-  ESP32PWM::allocateTimer(0);
-  ESP32PWM::allocateTimer(1);
-  servo1.setPeriodHertz(50);
-  servo2.setPeriodHertz(50);
-  applyConveyor();
+  // setMaxSpeed wajib: bawaan AccelStepper hanya 1 langkah/detik,
+  // sehingga setSpeed() akan dibatasi ke nilai itu jika tidak diatur.
+  m1.setMaxSpeed(MAX_STEP_PER_SEC + 200);
+  applyConveyor();   // conveyor langsung jalan, sebelum WiFi tersambung
 
   connectWifi();
   client.setServer(MQTT_SERVER, MQTT_PORT);
@@ -229,6 +242,8 @@ void setup() {
 }
 
 void loop() {
+  m1.runSpeed();   // putar stepper (harus dipanggil sesering mungkin)
+
   if (WiFi.status() != WL_CONNECTED) connectWifi();
   reconnectMqtt();
   client.loop();
@@ -240,4 +255,6 @@ void loop() {
     if (conveyorOn) processItem();   // barang hanya dihitung saat conveyor jalan
   }
   lastIrState = ir;
+
+  m1.runSpeed();
 }
