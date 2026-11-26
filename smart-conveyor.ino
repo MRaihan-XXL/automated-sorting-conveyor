@@ -3,7 +3,7 @@
   - IR barrier  : hitung barang masuk
   - HC-SR04     : ukur tinggi barang (QC)
   - LDR + LED   : baca kecerahan/warna kemasan (QC)
-  - Stepper     : penggerak conveyor (kecepatan diatur lewat langkah/detik)
+  - Stepper     : penggerak conveyor (kecepatan tetap 800 langkah/detik)
   - Buzzer      : alarm saat barang reject
   - MQTT        : publish data, subscribe kontrol dari dashboard
 
@@ -24,7 +24,7 @@ const int   MQTT_PORT   = 1883;
 // Broker publik
 const String PREFIX       = "conveyortesst";
 const String TOPIC_DATA   = PREFIX + "/data";
-const String TOPIC_CTRL   = PREFIX + "/control"; //{"cmd": "conveyor","state": "off","speed": 45}
+const String TOPIC_CTRL   = PREFIX + "/control"; //{"cmd": "conveyor","state": "off"}
 const String TOPIC_STATUS = PREFIX + "/status";
 
 // ====== Pin ======
@@ -42,8 +42,7 @@ const int PIN_IN3 = 19;
 const int PIN_IN4 = 21;
 
 // ====== Parameter stepper ======
-const float MAX_STEP_PER_SEC = 800;   // speed 90 -> 800 langkah/detik (~12 RPM)
-                                      // turunkan bila motor bergetar/melompat
+const float STEPPER_SPEED = 800.0;  // langkah/detik
 
 // ====== Parameter QC (sesuaikan saat kalibrasi) ======
 const float SENSOR_HEIGHT_CM = 30.0;  // jarak sensor ke permukaan belt
@@ -60,7 +59,6 @@ PubSubClient client(espClient);
 AccelStepper m1(AccelStepper::HALF4WIRE, PIN_IN1, PIN_IN3, PIN_IN2, PIN_IN4);
 
 bool conveyorOn = true;
-int  conveyorSpeed = 30;  // 0-90 (dipetakan ke 0-MAX_STEP_PER_SEC langkah/detik)
 
 unsigned long totalMasuk = 0, totalNormal = 0, totalReject = 0;
 float lastTinggi = 0;
@@ -72,8 +70,7 @@ unsigned long lastIrMs = 0;
 unsigned long lastReconnectMs = 0;
 
 // ---------- Delay yang tetap memutar stepper ----------
-// Pengganti delay(): selama menunggu, motor tetap dijalankan
-// sehingga conveyor tidak berhenti saat barang diproses.
+// Menjaga stepper tetap bergerak selama delay saat conveyor aktif.
 void stepDelay(unsigned long ms) {
   unsigned long t0 = millis();
   while (millis() - t0 < ms) {
@@ -83,8 +80,9 @@ void stepDelay(unsigned long ms) {
 
 // ---------- Stepper conveyor ----------
 void applyConveyor() {
-  if (conveyorOn && conveyorSpeed > 0) {
-    m1.setSpeed(map(conveyorSpeed, 0, 90, 0, (long)MAX_STEP_PER_SEC));  // langkah/detik
+  if (conveyorOn) {
+    m1.enableOutputs();
+    m1.setSpeed(STEPPER_SPEED);
   } else {
     m1.setSpeed(0);
     m1.disableOutputs();  // matikan kumparan agar tidak panas
@@ -93,10 +91,9 @@ void applyConveyor() {
 
 // ---------- MQTT ----------
 void publishStatus() {
-  StaticJsonDocument<96> doc;
+  StaticJsonDocument<48> doc;
   doc["state"] = conveyorOn ? "on" : "off";
-  doc["speed"] = conveyorSpeed;
-  char buf[96];
+  char buf[48];
   serializeJson(doc, buf);
   client.publish(TOPIC_STATUS.c_str(), buf, true);
 }
@@ -119,12 +116,10 @@ void onMessage(char* topic, byte* payload, unsigned int len) {
   if (deserializeJson(doc, payload, len)) return;
 
   if (doc["cmd"] == "conveyor") {
-    conveyorOn    = (doc["state"] == "on");
-    conveyorSpeed = constrain((int)(doc["speed"] | 30), 0, 90);
+    conveyorOn = (doc["state"] == "on");
     applyConveyor();
     publishStatus();
-    Serial.printf("Kontrol: conveyor %s, speed %d\n",
-                  conveyorOn ? "ON" : "OFF", conveyorSpeed);
+    Serial.printf("Kontrol: conveyor %s\n", conveyorOn ? "ON" : "OFF");
   }
 }
 
@@ -191,6 +186,10 @@ void beepReject() {
 void processItem() {
   totalMasuk++;
 
+  stepDelay(1000);
+  m1.setSpeed(0);
+  m1.disableOutputs();
+
   // QC tinggi
   float jarak = avgDistanceCm();
   lastTinggi = SENSOR_HEIGHT_CM - jarak;
@@ -201,6 +200,7 @@ void processItem() {
   stepDelay(50);
   lastLdr = avgLdr();
   digitalWrite(PIN_LED, LOW);
+  applyConveyor();
   bool warnaOK = (lastLdr >= LDR_MIN && lastLdr <= LDR_MAX);
 
   if (tinggiOK && warnaOK) {
@@ -233,7 +233,7 @@ void setup() {
 
   // setMaxSpeed wajib: bawaan AccelStepper hanya 1 langkah/detik,
   // sehingga setSpeed() akan dibatasi ke nilai itu jika tidak diatur.
-  m1.setMaxSpeed(MAX_STEP_PER_SEC + 200);
+  m1.setMaxSpeed(STEPPER_SPEED);
   applyConveyor();   // conveyor langsung jalan, sebelum WiFi tersambung
 
   connectWifi();

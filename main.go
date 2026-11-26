@@ -35,13 +35,11 @@ type ConveyorData struct {
 
 type ConveyorStatus struct {
 	State string `json:"state"`
-	Speed int    `json:"speed"`
 }
 
 type ControlCommand struct {
 	Cmd   string `json:"cmd"`
 	State string `json:"state"`
-	Speed int    `json:"speed"`
 }
 
 // State Manager & SSE Broadcaster
@@ -55,7 +53,7 @@ type Hub struct {
 func NewHub() *Hub {
 	return &Hub{
 		data:    ConveyorData{Hasil: "-"},
-		status:  ConveyorStatus{State: "off", Speed: 30},
+		status:  ConveyorStatus{State: "off"},
 		clients: make(map[chan string]bool),
 	}
 }
@@ -137,18 +135,11 @@ func main() {
 	app.Post("/api/control", func(c fiber.Ctx) error {
 		var req struct {
 			State string `json:"state"`
-			Speed int    `json:"speed"`
 		}
 		if err := c.Bind().Body(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Payload tidak valid"})
 		}
 
-		// Validasi rentang speed sesuai kode ESP32 (0 - 90)
-		if req.Speed < 0 {
-			req.Speed = 0
-		} else if req.Speed > 90 {
-			req.Speed = 90
-		}
 		if req.State != "on" && req.State != "off" {
 			req.State = "off"
 		}
@@ -156,7 +147,6 @@ func main() {
 		cmd := ControlCommand{
 			Cmd:   "conveyor",
 			State: req.State,
-			Speed: req.Speed,
 		}
 		payload, _ := json.Marshal(cmd)
 

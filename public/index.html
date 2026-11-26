@@ -37,16 +37,7 @@
         </div>
       </div>
 
-      <div>
-        <div class="flex justify-between text-sm mb-2">
-          <label for="speedSlider" class="text-slate-300">Kecepatan Servo (0 - 90)</label>
-          <span id="speedValue" class="font-mono font-bold text-sky-400">30</span>
-        </div>
-        <input id="speedSlider" type="range" min="0" max="90" value="30"
-               oninput="document.getElementById('speedValue').textContent = this.value"
-               onchange="sendControl(currentState)"
-               class="w-full accent-sky-500 cursor-pointer">
-      </div>
+      <p class="text-sm text-slate-400">Info kecepatan stepper: <span class="font-mono font-semibold text-sky-400">800 langkah/detik tetap</span></p>
     </div>
 
     <!-- Statistik Barang -->
@@ -111,18 +102,14 @@
       const badge = document.getElementById("statusBadge");
       badge.textContent = currentState;
       badge.className = "font-bold uppercase " + (currentState === "on" ? "text-emerald-400" : "text-rose-400");
-
-      document.getElementById("speedSlider").value = s.speed ?? 30;
-      document.getElementById("speedValue").textContent = s.speed ?? 30;
     }
 
     async function sendControl(state) {
-      const speed = parseInt(document.getElementById("speedSlider").value, 10);
       try {
         await fetch("/api/control", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ state, speed })
+          body: JSON.stringify({ state })
         });
       } catch (err) {
         console.error("Gagal mengirim perintah:", err);
