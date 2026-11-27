@@ -21,6 +21,7 @@ const (
 	TopicData   = TopicPrefix + "/data"
 	TopicCtrl   = TopicPrefix + "/control"
 	TopicStatus = TopicPrefix + "/status"
+	TopicSerial = TopicPrefix + "/serial"
 )
 
 // Payload struktur dari/ke ESP32
@@ -42,12 +43,18 @@ type ControlCommand struct {
 	State string `json:"state"`
 }
 
+type SerialLog struct {
+	Time    time.Time `json:"time"`
+	Message string    `json:"message"`
+}
+
 // State Manager & SSE Broadcaster
 type Hub struct {
-	mu      sync.RWMutex
-	data    ConveyorData
-	status  ConveyorStatus
-	clients map[chan string]bool
+	mu         sync.RWMutex
+	data       ConveyorData
+	status     ConveyorStatus
+	serialLogs []SerialLog
+	clients    map[chan string]bool
 }
 
 func NewHub() *Hub {
@@ -56,6 +63,19 @@ func NewHub() *Hub {
 		status:  ConveyorStatus{State: "off"},
 		clients: make(map[chan string]bool),
 	}
+}
+
+func (h *Hub) AddSerialLog(message string) {
+	entry := SerialLog{Time: time.Now(), Message: message}
+
+	h.mu.Lock()
+	h.serialLogs = append(h.serialLogs, entry)
+	if len(h.serialLogs) > 100 {
+		h.serialLogs = h.serialLogs[len(h.serialLogs)-100:]
+	}
+	h.mu.Unlock()
+
+	h.Broadcast("serial", entry)
 }
 
 func (h *Hub) Broadcast(eventType string, payload interface{}) {
@@ -107,6 +127,10 @@ func main() {
 					hub.Broadcast("status", s)
 				}
 			})
+
+			c.Subscribe(TopicSerial, 0, func(_ mqtt.Client, m mqtt.Message) {
+				hub.AddSerialLog(string(m.Payload()))
+			})
 		})
 
 	mqttClient := mqtt.NewClient(opts)
@@ -128,6 +152,7 @@ func main() {
 		return c.JSON(fiber.Map{
 			"data":   hub.data,
 			"status": hub.status,
+			"serial": hub.serialLogs,
 		})
 	})
 

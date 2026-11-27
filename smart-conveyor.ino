@@ -14,6 +14,7 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <AccelStepper.h>
+#include <stdio.h>
 
 // ====== WiFi & MQTT ======
 const char* WIFI_SSID   = "MASUKKAN_SSID_WIFI";
@@ -26,6 +27,7 @@ const String PREFIX       = "conveyortesst";
 const String TOPIC_DATA   = PREFIX + "/data";
 const String TOPIC_CTRL   = PREFIX + "/control"; //{"cmd": "conveyor","state": "off"}
 const String TOPIC_STATUS = PREFIX + "/status";
+const String TOPIC_SERIAL = PREFIX + "/serial";
 
 // ====== Pin ======
 const int PIN_IR     = 27;  // sensor IR barrier (aktif LOW saat ada barang)
@@ -57,6 +59,13 @@ PubSubClient client(espClient);
 
 // Urutan pin untuk 28BYJ-48 via ULN2003: IN1, IN3, IN2, IN4
 AccelStepper m1(AccelStepper::HALF4WIRE, PIN_IN1, PIN_IN3, PIN_IN2, PIN_IN4);
+
+void logSerial(const char* message) {
+  Serial.println(message);
+  if (client.connected()) {
+    client.publish(TOPIC_SERIAL.c_str(), message);
+  }
+}
 
 bool conveyorOn = true;
 
@@ -119,18 +128,20 @@ void onMessage(char* topic, byte* payload, unsigned int len) {
     conveyorOn = (doc["state"] == "on");
     applyConveyor();
     publishStatus();
-    Serial.printf("Kontrol: conveyor %s\n", conveyorOn ? "ON" : "OFF");
+    char message[40];
+    snprintf(message, sizeof(message), "Kontrol: conveyor %s", conveyorOn ? "ON" : "OFF");
+    logSerial(message);
   }
 }
 
 void connectWifi() {
-  Serial.print("Menghubungkan WiFi");
+  logSerial("Menghubungkan WiFi");
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   while (WiFi.status() != WL_CONNECTED) {
     stepDelay(300);   // conveyor tetap jalan selagi menunggu WiFi
     Serial.print(".");
   }
-  Serial.println(" terhubung");
+  logSerial("WiFi terhubung");
 }
 
 void reconnectMqtt() {
@@ -139,14 +150,16 @@ void reconnectMqtt() {
   lastReconnectMs = millis();
 
   String id = "conveyor-" + String((uint32_t)esp_random(), HEX);
-  Serial.print("Menghubungkan MQTT...");
+  logSerial("Menghubungkan MQTT...");
   if (client.connect(id.c_str())) {
-    Serial.println(" ok");
+    logSerial("Menghubungkan MQTT... ok");
     client.subscribe(TOPIC_CTRL.c_str());
     publishStatus();
     publishData();
   } else {
-    Serial.printf(" gagal (rc=%d)\n", client.state());
+    char message[48];
+    snprintf(message, sizeof(message), "Menghubungkan MQTT gagal (rc=%d)", client.state());
+    logSerial(message);
   }
 }
 
@@ -212,10 +225,13 @@ void processItem() {
     beepReject();
   }
 
-  Serial.printf("Masuk=%lu Normal=%lu Reject=%lu | tinggi=%.1f cm (%s) | ldr=%d (%s) -> %s\n",
-                totalMasuk, totalNormal, totalReject,
-                lastTinggi, tinggiOK ? "OK" : "X",
-                lastLdr, warnaOK ? "OK" : "X", lastHasil);
+  char message[160];
+  snprintf(message, sizeof(message),
+           "Masuk=%lu Normal=%lu Reject=%lu | tinggi=%.1f cm (%s) | ldr=%d (%s) -> %s",
+           totalMasuk, totalNormal, totalReject,
+           lastTinggi, tinggiOK ? "OK" : "X",
+           lastLdr, warnaOK ? "OK" : "X", lastHasil);
+  logSerial(message);
 
   publishData();
 }

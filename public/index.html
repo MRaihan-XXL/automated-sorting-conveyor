@@ -76,10 +76,58 @@
         </div>
       </div>
     </div>
+
+    <!-- Log Serial ESP32 -->
+    <div class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+      <div class="flex items-center justify-between gap-3 mb-4">
+        <div>
+          <h2 class="text-lg font-semibold">Serial Monitor</h2>
+          <p class="text-xs text-slate-400">Log ESP32 terbaru (maksimal 100 baris)</p>
+        </div>
+        <span id="serialCount" class="text-xs text-slate-400">0 baris</span>
+      </div>
+      <div id="serialLogs" class="h-64 overflow-y-auto rounded-lg bg-slate-950 p-4 font-mono text-xs text-slate-300 space-y-2" aria-live="polite">
+        <p id="serialEmpty" class="text-slate-500">Belum ada log serial.</p>
+      </div>
+    </div>
   </div>
 
   <script>
     let currentState = "on";
+    const serialEntries = [];
+    const serialEntryKeys = new Set();
+
+    function appendSerialLog(entry) {
+      const key = `${entry.time}|${entry.message}`;
+      if (serialEntryKeys.has(key)) return;
+
+      serialEntryKeys.add(key);
+      serialEntries.push(entry);
+      if (serialEntries.length > 100) {
+        const oldest = serialEntries.shift();
+        serialEntryKeys.delete(`${oldest.time}|${oldest.message}`);
+      }
+
+      const container = document.getElementById("serialLogs");
+      container.replaceChildren();
+      if (serialEntries.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "text-slate-500";
+        empty.textContent = "Belum ada log serial.";
+        container.appendChild(empty);
+      } else {
+        for (const log of serialEntries) {
+          const row = document.createElement("p");
+          const time = document.createElement("span");
+          time.className = "text-slate-500 mr-3";
+          time.textContent = new Date(log.time).toLocaleTimeString("id-ID");
+          row.append(time, document.createTextNode(log.message));
+          container.appendChild(row);
+        }
+      }
+      document.getElementById("serialCount").textContent = `${serialEntries.length} baris`;
+      container.scrollTop = container.scrollHeight;
+    }
 
     function updateDataUI(d) {
       document.getElementById("valMasuk").textContent = d.masuk ?? 0;
@@ -122,6 +170,7 @@
       .then(res => {
         if (res.data) updateDataUI(res.data);
         if (res.status) updateStatusUI(res.status);
+        if (Array.isArray(res.serial)) res.serial.forEach(appendSerialLog);
       });
 
     // Dengarkan stream SSE dari Fiber v3
@@ -136,6 +185,7 @@
     };
     evtSource.addEventListener("data", (e) => updateDataUI(JSON.parse(e.data)));
     evtSource.addEventListener("status", (e) => updateStatusUI(JSON.parse(e.data)));
+    evtSource.addEventListener("serial", (e) => appendSerialLog(JSON.parse(e.data)));
   </script>
 </body>
 </html>
