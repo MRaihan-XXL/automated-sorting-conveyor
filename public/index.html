@@ -17,6 +17,9 @@
       <div class="flex items-center gap-2">
         <span id="connDot" class="h-3 w-3 rounded-full bg-amber-500"></span>
         <span id="connText" class="text-sm text-slate-300">Menghubungkan SSE...</span>
+        <span class="text-slate-600">|</span>
+        <span id="espMqttDot" class="h-3 w-3 rounded-full bg-amber-500"></span>
+        <span id="espMqttText" class="text-sm text-slate-300">ESP MQTT: Mengecek...</span>
       </div>
     </div>
 
@@ -150,6 +153,13 @@
       const badge = document.getElementById("statusBadge");
       badge.textContent = currentState;
       badge.className = "font-bold uppercase " + (currentState === "on" ? "text-emerald-400" : "text-rose-400");
+
+      const mqttConnected = s.mqtt_connected === true;
+      const mqttDot = document.getElementById("espMqttDot");
+      const mqttText = document.getElementById("espMqttText");
+      mqttDot.className = "h-3 w-3 rounded-full " + (mqttConnected ? "bg-emerald-500" : "bg-rose-500");
+      mqttText.textContent = mqttConnected ? "ESP MQTT: Terhubung" : "ESP MQTT: Terputus";
+      mqttText.className = "text-sm " + (mqttConnected ? "text-emerald-400" : "text-rose-400");
     }
 
     async function sendControl(state) {

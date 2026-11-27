@@ -100,9 +100,10 @@ void applyConveyor() {
 
 // ---------- MQTT ----------
 void publishStatus() {
-  StaticJsonDocument<48> doc;
+  StaticJsonDocument<96> doc;
   doc["state"] = conveyorOn ? "on" : "off";
-  char buf[48];
+  doc["mqtt_connected"] = client.connected();
+  char buf[96];
   serializeJson(doc, buf);
   client.publish(TOPIC_STATUS.c_str(), buf, true);
 }
@@ -116,8 +117,8 @@ void publishData() {
   doc["ldr"]    = lastLdr;
   doc["hasil"]  = lastHasil;
   char buf[192];
-  size_t n = serializeJson(doc, buf);
-  client.publish(TOPIC_DATA.c_str(), buf, n);
+  serializeJson(doc, buf);
+  client.publish(TOPIC_DATA.c_str(), buf);
 }
 
 void onMessage(char* topic, byte* payload, unsigned int len) {
@@ -151,7 +152,13 @@ void reconnectMqtt() {
 
   String id = "conveyor-" + String((uint32_t)esp_random(), HEX);
   logSerial("Menghubungkan MQTT...");
-  if (client.connect(id.c_str())) {
+  if (client.connect(
+        id.c_str(),
+        TOPIC_STATUS.c_str(),
+        0,
+        true,
+        "{\"state\":\"off\",\"mqtt_connected\":false}"
+      )) {
     logSerial("Menghubungkan MQTT... ok");
     client.subscribe(TOPIC_CTRL.c_str());
     publishStatus();
@@ -199,7 +206,7 @@ void beepReject() {
 void processItem() {
   totalMasuk++;
 
-  stepDelay(1000);
+  stepDelay(2000);
   m1.setSpeed(0);
   m1.disableOutputs();
 

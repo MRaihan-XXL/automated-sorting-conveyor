@@ -35,7 +35,8 @@ type ConveyorData struct {
 }
 
 type ConveyorStatus struct {
-	State string `json:"state"`
+	State         string `json:"state"`
+	MqttConnected bool   `json:"mqtt_connected"`
 }
 
 type ControlCommand struct {
@@ -60,7 +61,7 @@ type Hub struct {
 func NewHub() *Hub {
 	return &Hub{
 		data:    ConveyorData{Hasil: "-"},
-		status:  ConveyorStatus{State: "off"},
+		status:  ConveyorStatus{State: "off", MqttConnected: false},
 		clients: make(map[chan string]bool),
 	}
 }
