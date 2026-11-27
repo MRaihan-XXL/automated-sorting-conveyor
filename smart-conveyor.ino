@@ -31,8 +31,8 @@ const String TOPIC_SERIAL = PREFIX + "/serial";
 
 // ====== Pin ======
 const int PIN_IR     = 27;  // sensor IR barrier (aktif LOW saat ada barang)
-const int PIN_TRIG   = 5;
-const int PIN_ECHO   = 18;  // pakai pembagi tegangan 1k/2k dari Echo
+const int PIN_TRIG   = 19;
+const int PIN_ECHO   = 21;  // pakai pembagi tegangan 1k/2k dari Echo
 const int PIN_LDR    = 34;  // ADC1 (aman dipakai saat WiFi aktif)
 const int PIN_LED    = 4;
 const int PIN_BUZZER = 25;
@@ -40,8 +40,8 @@ const int PIN_BUZZER = 25;
 // Driver ULN2003 (stepper 28BYJ-48)
 const int PIN_IN1 = 16;
 const int PIN_IN2 = 17;
-const int PIN_IN3 = 19;
-const int PIN_IN4 = 21;
+const int PIN_IN3 = 5;
+const int PIN_IN4 = 18;
 
 // ====== Parameter stepper ======
 const float STEPPER_SPEED = 800.0;  // langkah/detik
